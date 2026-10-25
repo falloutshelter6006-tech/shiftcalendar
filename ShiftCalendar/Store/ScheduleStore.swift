@@ -195,13 +195,13 @@ final class ScheduleStore: ObservableObject {
         persist()
     }
 
-    func setPatternAnchor(_ patternID: UUID, date: Date) {
+    func setPatternAnchor(patternID: UUID, date: Date) {
         guard let index = data.patterns.firstIndex(where: { $0.id == patternID }) else { return }
         data.patterns[index].anchorKey = Cal.dayKey(date)
         persist()
     }
 
-    func setPatternName(_ patternID: UUID, name: String) {
+    func setPatternName(patternID: UUID, name: String) {
         guard let index = data.patterns.firstIndex(where: { $0.id == patternID }) else { return }
         data.patterns[index].name = name
         persist()
