@@ -4,6 +4,28 @@ import SwiftUI
 struct DaySelection: Identifiable {
     let date: Date
     var id: String { Cal.dayKey(date) }
+
+    init(date: Date) {
+        self.date = date
+    }
+}
+
+/// Файл, который нужно показать в системном шите «Поделиться».
+struct ShareItem: Identifiable {
+    let url: URL
+    var id: String { url.absoluteString }
+}
+
+/// Общая навигация между вкладками: какой месяц открыт в календаре и т.п.
+@MainActor
+final class AppNavigation: ObservableObject {
+    @Published var tab: Int = 0
+    @Published var month: Date = Cal.startOfMonth(Date())
+
+    func openMonth(_ date: Date) {
+        month = Cal.startOfMonth(date)
+        tab = 0
+    }
 }
 
 struct ColorDot: View {
@@ -66,7 +88,7 @@ struct MonthHeader: View {
     }
 }
 
-/// Заголовок блока с содержимым на «карточке».
+/// Блок с содержимым на «карточке».
 struct Card<Content: View>: View {
     private let content: Content
 

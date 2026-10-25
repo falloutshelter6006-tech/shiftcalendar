@@ -2,26 +2,59 @@ import SwiftUI
 
 struct StatsScreen: View {
     @EnvironmentObject private var store: ScheduleStore
-    @State private var month: Date = Cal.startOfMonth(Date())
+    @EnvironmentObject private var nav: AppNavigation
+
+    private let cardColumns = [
+        GridItem(.flexible(), spacing: 10),
+        GridItem(.flexible(), spacing: 10)
+    ]
 
     private var stats: MonthStats {
-        store.stats(for: month)
+        store.stats(for: nav.month)
+    }
+
+    private var currency: String {
+        store.data.settings.currency
     }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 14) {
-                    MonthHeader(month: $month)
+                    MonthHeader(month: $nav.month)
                         .padding(.horizontal, 2)
 
-                    HStack(spacing: 10) {
-                        statCard(title: "Смены", value: "\(stats.workingDays)", tint: .blue)
-                        statCard(title: "Часы", value: stats.hoursText, tint: .green)
-                        statCard(title: "Выходные", value: "\(stats.offDays)", tint: .orange)
+                    LazyVGrid(columns: cardColumns, spacing: 10) {
+                        statCard(
+                            title: "Смен",
+                            value: "\(stats.workingDays)",
+                            detail: "\(stats.offDays) вых.",
+                            tint: .blue
+                        )
+                        statCard(
+                            title: "Часов",
+                            value: stats.hoursText,
+                            detail: stats.nightHours > 0
+                                ? "ночных \(Fmt.hours(stats.nightHours))"
+                                : "за месяц",
+                            tint: .green
+                        )
+                        statCard(
+                            title: "Начислено",
+                            value: Fmt.money(stats.totalPay, currency: currency),
+                            detail: "за месяц",
+                            tint: .orange
+                        )
+                        statCard(
+                            title: "Переработка",
+                            value: Fmt.hours(stats.overtimeHours),
+                            detail: "сверх смены",
+                            tint: .purple
+                        )
                     }
 
                     breakdown
+                    ratesCard
                 }
                 .padding(16)
             }
@@ -31,27 +64,38 @@ struct StatsScreen: View {
         }
     }
 
-    private func statCard(title: String, value: String, tint: Color) -> some View {
-        VStack(spacing: 4) {
+    // MARK: - Карточки
+
+    private func statCard(title: String, value: String, detail: String, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
             Text(value)
-                .font(.system(size: 22, weight: .bold, design: .rounded))
+                .font(.system(size: 21, weight: .bold, design: .rounded))
                 .foregroundStyle(tint)
                 .lineLimit(1)
-                .minimumScaleFactor(0.6)
+                .minimumScaleFactor(0.5)
+
             Text(title)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(Color.appLabel)
+
+            Text(detail)
                 .font(.caption2)
                 .foregroundStyle(Color.appSecondaryLabel)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(Color.appCellBackground)
         )
     }
 
+    // MARK: - Разбивка по типам
+
     private var breakdown: some View {
-        let total = stats.counts.reduce(0) { $0 + $1.days }
+        let totalDays = max(stats.counts.reduce(0) { $0 + $1.days }, 1)
 
         return Card {
             VStack(alignment: .leading, spacing: 12) {
@@ -65,21 +109,34 @@ struct StatsScreen: View {
                         .foregroundStyle(Color.appSecondaryLabel)
                 } else {
                     ForEach(stats.counts) { item in
-                        VStack(spacing: 6) {
+                        VStack(spacing: 5) {
                             HStack(spacing: 6) {
                                 ColorDot(color: item.type.color, size: 9)
                                 Text(item.type.name)
                                     .font(.subheadline)
                                     .foregroundStyle(Color.appLabel)
                                 Spacer(minLength: 4)
-                                Text(detailText(for: item))
-                                    .font(.caption)
-                                    .foregroundStyle(Color.appSecondaryLabel)
+                                if item.type.isWorking {
+                                    Text(Fmt.money(item.pay, currency: currency))
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(Color.appLabel)
+                                }
                             }
+
+                            HStack(spacing: 6) {
+                                Text("\(item.days) дн.")
+                                if item.type.isWorking {
+                                    Text("· \(Fmt.hours(item.hours))")
+                                }
+                                Spacer(minLength: 4)
+                                Text(item.type.timeRangeText)
+                            }
+                            .font(.caption2)
+                            .foregroundStyle(Color.appSecondaryLabel)
 
                             ProgressView(
                                 value: Double(item.days),
-                                total: Double(max(total, 1))
+                                total: Double(totalDays)
                             )
                             .tint(item.type.color)
                         }
@@ -89,10 +146,81 @@ struct StatsScreen: View {
         }
     }
 
-    private func detailText(for item: TypeCount) -> String {
-        if item.type.isWorking {
-            return "\(item.days) дн · \(String(format: "%.0f", item.hours)) ч"
+    // MARK: - Тарифы
+
+    private var ratesCard: some View {
+        let working = store.data.shiftTypes.filter { $0.isWorking }
+        let hasRates = working.contains { type in
+            type.payRule.mode == .hourly
+                ? type.payRule.hourlyRate > 0
+                : type.payRule.shiftRate > 0
         }
-        return "\(item.days) дн"
+        let settings = store.data.settings
+
+        return Card {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Тарифы")
+                    .font(.headline)
+                    .foregroundStyle(Color.appLabel)
+
+                if working.isEmpty {
+                    Text("Нет рабочих типов смен")
+                        .font(.subheadline)
+                        .foregroundStyle(Color.appSecondaryLabel)
+                } else {
+                    ForEach(working) { type in
+                        HStack(spacing: 6) {
+                            ColorDot(color: type.color, size: 8)
+                            Text(type.name)
+                                .font(.subheadline)
+                                .foregroundStyle(Color.appLabel)
+                            Spacer(minLength: 4)
+                            Text(rateText(type))
+                                .font(.caption)
+                                .foregroundStyle(Color.appSecondaryLabel)
+                                .multilineTextAlignment(.trailing)
+                        }
+                    }
+                }
+
+                Divider()
+
+                Text(detailLine(settings: settings))
+                    .font(.caption2)
+                    .foregroundStyle(Color.appSecondaryLabel)
+
+                if !hasRates {
+                    Text("Ставки не заданы: Настройки → Типы смен → выбери тип.")
+                        .font(.caption2)
+                        .foregroundStyle(Color.orange)
+                }
+            }
+        }
+    }
+
+    private func rateText(_ type: ShiftType) -> String {
+        let rule = type.payRule
+        var text: String
+        switch rule.mode {
+        case .hourly:
+            text = rule.hourlyRate > 0
+                ? "\(Fmt.rate(rule.hourlyRate, currency: currency))/ч"
+                : "ставка не задана"
+        case .perShift:
+            text = rule.shiftRate > 0
+                ? "\(Fmt.rate(rule.shiftRate, currency: currency))/смена"
+                : "ставка не задана"
+        }
+        if rule.mode == .hourly, rule.nightBonusPercent > 0 {
+            text += " · ночь +\(Int(rule.nightBonusPercent))%"
+        }
+        return text
+    }
+
+    private func detailLine(settings: AppSettings) -> String {
+        let multiplier = String(format: "%.1f", settings.overtimeMultiplier)
+            .replacingOccurrences(of: ".", with: ",")
+        let window = "\(Cal.timeText(settings.nightStartMinutes))–\(Cal.timeText(settings.nightEndMinutes))"
+        return "Переработка ×\(multiplier) · ночные с \(window)"
     }
 }

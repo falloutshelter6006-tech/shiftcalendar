@@ -32,6 +32,8 @@ struct ShiftTypesView: View {
                 } label: {
                     Label("Добавить тип смены", systemImage: "plus.circle")
                 }
+            } footer: {
+                Text("Ставка и надбавка за ночные часы задаются внутри типа смены.")
             }
         }
         .navigationTitle("Типы смен")
@@ -60,6 +62,11 @@ struct ShiftTypesView: View {
                 Text("\(type.timeRangeText) · \(type.durationText)")
                     .font(.caption)
                     .foregroundStyle(Color.appSecondaryLabel)
+                if type.isWorking {
+                    Text(rateText(for: type))
+                        .font(.caption2)
+                        .foregroundStyle(Color.accentColor)
+                }
             }
 
             Spacer(minLength: 4)
@@ -69,6 +76,28 @@ struct ShiftTypesView: View {
                 .foregroundStyle(Color.appSecondaryLabel.opacity(0.6))
         }
         .contentShape(Rectangle())
+    }
+
+    private func rateText(for type: ShiftType) -> String {
+        let rule = type.payRule
+        let currency = store.data.settings.currency
+        var text: String
+
+        switch rule.mode {
+        case .hourly:
+            text = rule.hourlyRate > 0
+                ? "\(Fmt.rate(rule.hourlyRate, currency: currency))/ч"
+                : "Ставка не задана"
+        case .perShift:
+            text = rule.shiftRate > 0
+                ? "\(Fmt.rate(rule.shiftRate, currency: currency))/смена"
+                : "Ставка не задана"
+        }
+
+        if rule.mode == .hourly, rule.nightBonusPercent > 0 {
+            text += " · ночь +\(Int(rule.nightBonusPercent))%"
+        }
+        return text
     }
 
     private func deleteRows(_ offsets: IndexSet) {

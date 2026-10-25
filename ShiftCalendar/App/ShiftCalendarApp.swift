@@ -23,11 +23,13 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
 struct ShiftCalendarApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var store = ScheduleStore()
+    @StateObject private var nav = AppNavigation()
 
     var body: some Scene {
         WindowGroup {
             RootView()
                 .environmentObject(store)
+                .environmentObject(nav)
         }
     }
 }

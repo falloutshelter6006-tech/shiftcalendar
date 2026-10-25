@@ -1,31 +1,6 @@
 import Foundation
 import SwiftUI
 
-struct TypeCount: Identifiable {
-    let id: UUID
-    let type: ShiftType
-    let days: Int
-
-    var hours: Double {
-        Double(days) * type.durationHours
-    }
-}
-
-struct MonthStats {
-    var workingDays: Int = 0
-    var offDays: Int = 0
-    var totalHours: Double = 0
-    var counts: [TypeCount] = []
-
-    var hoursText: String {
-        let rounded = totalHours.rounded()
-        if abs(totalHours - rounded) < 0.01 {
-            return "\(Int(rounded)) ч"
-        }
-        return String(format: "%.1f ч", totalHours)
-    }
-}
-
 @MainActor
 final class ScheduleStore: ObservableObject {
     @Published private(set) var data: ScheduleData
@@ -60,6 +35,18 @@ final class ScheduleStore: ObservableObject {
         data.isDayOff(date)
     }
 
+    func hours(for date: Date) -> Double {
+        data.hours(for: date)
+    }
+
+    func hasHoursOverride(_ date: Date) -> Bool {
+        data.hasHoursOverride(date)
+    }
+
+    func pay(for date: Date) -> DayPay? {
+        PayCalculator.dayPay(for: date, data: data)
+    }
+
     /// Ручная смена. `nil` — принудительный выходной.
     func setShift(_ type: ShiftType?, for date: Date) {
         var patch = data.patch(for: date) ?? DayPatch()
@@ -69,6 +56,7 @@ final class ScheduleStore: ObservableObject {
         } else {
             patch.shiftTypeID = nil
             patch.isDayOff = true
+            patch.hours = nil
         }
         write(patch, for: date)
     }
@@ -78,6 +66,17 @@ final class ScheduleStore: ObservableObject {
         var patch = data.patch(for: date) ?? DayPatch()
         patch.shiftTypeID = nil
         patch.isDayOff = false
+        patch.hours = nil
+        write(patch, for: date)
+    }
+
+    func setHours(_ hours: Double?, for date: Date) {
+        var patch = data.patch(for: date) ?? DayPatch()
+        if let hours = hours {
+            patch.hours = max(0, hours)
+        } else {
+            patch.hours = nil
+        }
         write(patch, for: date)
     }
 
@@ -108,7 +107,8 @@ final class ScheduleStore: ObservableObject {
             colorHex: Palette.hexes[index % Palette.hexes.count],
             isWorking: true,
             startMinutes: 8 * 60,
-            endMinutes: 20 * 60
+            endMinutes: 20 * 60,
+            pay: PayRule()
         )
         data.shiftTypes.append(type)
         persist()
@@ -130,7 +130,9 @@ final class ScheduleStore: ObservableObject {
         data.shiftTypes.removeAll { $0.id == id }
 
         guard let fallbackID = data.shiftTypes.first?.id else { return }
-        data.pattern.cycle = data.pattern.cycle.map { $0 == id ? fallbackID : $0 }
+        for index in data.patterns.indices {
+            data.patterns[index].cycle = data.patterns[index].cycle.map { $0 == id ? fallbackID : $0 }
+        }
 
         var updates: [(String, DayPatch)] = []
         for (key, patch) in data.patches where patch.shiftTypeID == id {
@@ -150,76 +152,123 @@ final class ScheduleStore: ObservableObject {
         persist()
     }
 
-    // MARK: - Цикл
+    // MARK: - Графики (циклы)
 
-    func setPatternAnchor(_ date: Date) {
-        data.pattern.anchorKey = Cal.dayKey(date)
+    func pattern(id: UUID) -> WorkPattern? {
+        data.pattern(id: id)
+    }
+
+    @discardableResult
+    func addPattern() -> WorkPattern {
+        let source = data.activePattern
+        let pattern = WorkPattern(
+            name: "График \(data.patterns.count + 1)",
+            anchorKey: source?.anchorKey ?? Cal.dayKey(Cal.startOfMonth(Date())),
+            cycle: source?.cycle ?? [data.shiftTypes[0].id]
+        )
+        data.patterns.append(pattern)
+        data.activePatternID = pattern.id
+        persist()
+        return pattern
+    }
+
+    func updatePattern(_ pattern: WorkPattern) {
+        guard let index = data.patterns.firstIndex(where: { $0.id == pattern.id }) else { return }
+        var value = pattern
+        if value.cycle.isEmpty { value.cycle = [data.shiftTypes[0].id] }
+        data.patterns[index] = value
         persist()
     }
 
-    func setCycleDay(_ index: Int, to typeID: UUID) {
-        guard data.pattern.cycle.indices.contains(index) else { return }
-        data.pattern.cycle[index] = typeID
+    func setActivePattern(_ id: UUID) {
+        guard data.patterns.contains(where: { $0.id == id }) else { return }
+        data.activePatternID = id
         persist()
     }
 
-    func appendCycleDay() {
-        let typeID = data.pattern.cycle.last ?? data.shiftTypes[0].id
-        data.pattern.cycle.append(typeID)
+    func deletePattern(_ id: UUID) {
+        guard data.patterns.count > 1 else { return }
+        data.patterns.removeAll { $0.id == id }
+        if data.activePatternID == id, let first = data.patterns.first {
+            data.activePatternID = first.id
+        }
         persist()
     }
 
-    func removeCycleDay(at index: Int) {
-        guard data.pattern.cycle.count > 1, data.pattern.cycle.indices.contains(index) else { return }
-        data.pattern.cycle.remove(at: index)
+    func setPatternAnchor(_ patternID: UUID, date: Date) {
+        guard let index = data.patterns.firstIndex(where: { $0.id == patternID }) else { return }
+        data.patterns[index].anchorKey = Cal.dayKey(date)
+        persist()
+    }
+
+    func setPatternName(_ patternID: UUID, name: String) {
+        guard let index = data.patterns.firstIndex(where: { $0.id == patternID }) else { return }
+        data.patterns[index].name = name
+        persist()
+    }
+
+    func setCycleDay(patternID: UUID, index: Int, typeID: UUID) {
+        guard let patternIndex = data.patterns.firstIndex(where: { $0.id == patternID }),
+              data.patterns[patternIndex].cycle.indices.contains(index) else { return }
+        data.patterns[patternIndex].cycle[index] = typeID
+        persist()
+    }
+
+    func appendCycleDay(patternID: UUID) {
+        guard let index = data.patterns.firstIndex(where: { $0.id == patternID }) else { return }
+        let typeID = data.patterns[index].cycle.last ?? data.shiftTypes[0].id
+        data.patterns[index].cycle.append(typeID)
+        persist()
+    }
+
+    func removeCycleDay(patternID: UUID, index: Int) {
+        guard let patternIndex = data.patterns.firstIndex(where: { $0.id == patternID }),
+              data.patterns[patternIndex].cycle.count > 1,
+              data.patterns[patternIndex].cycle.indices.contains(index) else { return }
+        data.patterns[patternIndex].cycle.remove(at: index)
+        persist()
+    }
+
+    // MARK: - Настройки
+
+    func updateSettings(_ settings: AppSettings) {
+        data.settings = settings
         persist()
     }
 
     // MARK: - Статистика
 
     func stats(for month: Date) -> MonthStats {
-        let calendar = Cal.calendar
-        let first = Cal.startOfMonth(month)
-        guard let range = calendar.range(of: .day, in: .month, for: first) else {
-            return MonthStats()
-        }
-
-        var result = MonthStats()
-        var counter: [UUID: Int] = [:]
-
-        for day in range {
-            guard let date = calendar.date(byAdding: .day, value: day - 1, to: first) else { continue }
-            guard let type = data.shiftType(for: date) else {
-                result.offDays += 1
-                continue
-            }
-            counter[type.id, default: 0] += 1
-            if type.isWorking {
-                result.workingDays += 1
-                result.totalHours += type.durationHours
-            } else {
-                result.offDays += 1
-            }
-        }
-
-        var counts: [TypeCount] = []
-        for (id, days) in counter {
-            guard let type = data.shiftType(id: id) else { continue }
-            counts.append(TypeCount(id: id, type: type, days: days))
-        }
-        counts.sort { (lhs: TypeCount, rhs: TypeCount) -> Bool in
-            if lhs.type.isWorking != rhs.type.isWorking { return lhs.type.isWorking }
-            return lhs.type.name < rhs.type.name
-        }
-        result.counts = counts
-
-        return result
+        data.stats(in: month)
     }
 
-    // MARK: - Прочее
+    // MARK: - Сброс и обмен данными
 
     func resetAll() {
         data = ScheduleData.makeDefault()
+        persist()
+    }
+
+    func exportJSON() -> URL? {
+        do {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let raw = try encoder.encode(data)
+            let url = ExportService.temporaryURL(name: "Смены-\(Cal.dayKey(Date())).json")
+            try raw.write(to: url, options: .atomic)
+            return url
+        } catch {
+            return nil
+        }
+    }
+
+    func importJSON(from url: URL) throws {
+        let access = url.startAccessingSecurityScopedResource()
+        defer { if access { url.stopAccessingSecurityScopedResource() } }
+
+        let raw = try Data(contentsOf: url)
+        let decoded = try JSONDecoder().decode(ScheduleData.self, from: raw)
+        data = decoded.sanitized()
         persist()
     }
 

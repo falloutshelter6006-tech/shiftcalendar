@@ -40,6 +40,13 @@ enum Cal {
         return f
     }()
 
+    private static let shortMonthFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "ru_RU")
+        f.dateFormat = "LLL"
+        return f
+    }()
+
     static func startOfDay(_ date: Date) -> Date {
         calendar.startOfDay(for: date)
     }
@@ -70,6 +77,28 @@ enum Cal {
 
     static func shortDayTitle(_ date: Date) -> String {
         shortDayFormatter.string(from: date)
+    }
+
+    static func monthShortTitle(_ date: Date) -> String {
+        let text = shortMonthFormatter.string(from: date)
+        return String(text.prefix(1)).uppercased() + String(text.dropFirst())
+    }
+
+    static func year(_ date: Date) -> Int {
+        calendar.component(.year, from: date)
+    }
+
+    static func monthNumber(_ date: Date) -> Int {
+        calendar.component(.month, from: date)
+    }
+
+    /// Первое число указанного месяца и года.
+    static func monthDate(year: Int, month: Int) -> Date {
+        var comps = DateComponents()
+        comps.year = year
+        comps.month = month
+        comps.day = 1
+        return calendar.date(from: comps) ?? Date()
     }
 
     static func dayNumber(_ date: Date) -> Int {
