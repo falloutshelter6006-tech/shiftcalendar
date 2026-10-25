@@ -1,0 +1,57 @@
+name: ShiftCalendar
+
+options:
+  bundleIdPrefix: com.example
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: ""
+    DEVELOPMENT_TEAM: ""
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    SWIFT_EMIT_LOC_STRINGS: NO
+
+targets:
+  ShiftCalendar:
+    type: application
+    platform: iOS
+    deploymentTarget: "16.0"
+    sources:
+      - path: ShiftCalendar
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.shiftcalendar
+        PRODUCT_NAME: ShiftCalendar
+        TARGETED_DEVICE_FAMILY: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: Смены
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "1"
+        CFBundleDevelopmentRegion: ru
+        LSApplicationCategoryType: public.app-category.productivity
+        ITSAppUsesNonExemptEncryption: false
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+
+schemes:
+  ShiftCalendar:
+    build:
+      targets:
+        ShiftCalendar: all
+    run:
+      config: Debug
+    archive:
+      config: Release
